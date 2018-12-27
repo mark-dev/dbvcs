@@ -1,0 +1,1 @@
+ALTER TABLE test_table ADD COLUMN first_script5 text DEFAULT  'ZALESSKIY2';

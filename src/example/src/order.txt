@@ -1,0 +1,3 @@
+sp/test_func.sql
+view/test_view.sql
+view/test_mview.sql
