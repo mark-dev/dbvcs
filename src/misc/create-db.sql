@@ -8,8 +8,12 @@ BEGIN
    ) THEN
       CREATE ROLE ${dbuser} LOGIN PASSWORD '${dbuser}';
    END IF;
+
+
 END
 \$do\$;
 
 DROP DATABASE IF EXISTS ${db};
 CREATE DATABASE ${db} WITH OWNER ${dbuser};
+
+SELECT 1;

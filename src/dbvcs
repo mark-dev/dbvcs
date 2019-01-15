@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+CURRENT_DIR=`pwd`
+if [ ! -f "dbvcs.properties" ];
+then
+    echo "You must call this script from your database-project directory"
+    exit 1;
+fi
+
+SCRIPT=`readlink -f "$0"`
+SCRIPTPATH=`dirname "$SCRIPT"`
+PROJECT_DIR=`realpath $CURRENT_DIR`
+
+(cd $SCRIPTPATH && groovy -DprojectDir=$PROJECT_DIR dbvcs.groovy)

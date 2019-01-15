@@ -1,15 +1,14 @@
-package core
-
 import groovy.io.FileType
 import groovy.sql.Sql
 import groovy.text.SimpleTemplateEngine
 
-import java.nio.file.Paths
+import java.nio.file.Path
 import java.util.regex.Pattern
 
 import static ConfigUtils.CONFIG
 
 class DBUtils {
+
     public static final String DBVCS_TABLENAME = "dbvcs";
     public static final String DEFAULT_SCHEMA = "public"; //TODO: Это бы в конфигурацию
 
@@ -17,8 +16,11 @@ class DBUtils {
     static Sql TARGET_DB_CONNECTION = null;
 
     static Sql makeConnection(String db) {
+        Class.forName("org.postgresql.Driver");
+        def user = "postgres"
+        def password = "postgres"
         //TODO: в конфиг, как подключиться к БД(логин пароль итп)
-        def dbUrl = "jdbc:postgresql://${CONFIG.host}/${db}?user=postgres&password=postgres"
+        def dbUrl = "jdbc:postgresql://${CONFIG.host}/${db}?user=$user&password=$password"
         return Sql.newInstance(dbUrl, [
                 'driverClassName'  : "org.postgresql.Driver",
                 'allowMultiQueries': "true"
@@ -31,14 +33,14 @@ class DBUtils {
         return TARGET_DB_CONNECTION.firstRow(query)["current_version"] as Integer
     }
 
-    static boolean ensureVCSDBTableExists() {
+    static boolean createVCSDBTable() {
+        return evalInternalFile(TARGET_DB_CONNECTION, "create-vcsdb-table.sql", [:])
+    }
+
+    static boolean isDBVCSTableExists() {
         String query = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = ?1 AND table_name = ?2)"
         def row = TARGET_DB_CONNECTION.firstRow(query, [DEFAULT_SCHEMA, DBVCS_TABLENAME]);
-        if (!row.exists) {
-            def createRes = evalInternalFile(TARGET_DB_CONNECTION, "create-vcsdb-table.sql", [:])
-            println "dbvcs table is missing, but created automatically"
-        }
-        return true;
+        return row.exists;
     }
 
     static boolean isTargetDBExists() {
@@ -51,10 +53,9 @@ class DBUtils {
                 "db"    : CONFIG.targetDB,
                 "dbuser": CONFIG.targetDBUser
         ])
-        if (res)
-            return CONFIG.targetDB;
-        else
-            throw new RuntimeException("Failed to create target DB");
+        //TODO: Как-то убедиться бы, что здесь все корректно, использовать переменную res для этого - плохая идея,
+        // см описание statement.execute
+        return CONFIG.targetDB;
     }
 
     static Sql connectToTargetDB() {
@@ -127,7 +128,7 @@ class DBUtils {
 
 
             //Дропаем все исходники(хранимки,вью,мвью)
-            evalInternalFile("drop-src.sql", ["schema": "public"])
+            evalInternalFile("drop-src.sql", ["schema": DEFAULT_SCHEMA])
             //Накатываем исходники
             evalFiles(sourceFiles());
 
@@ -154,17 +155,17 @@ class DBUtils {
     }
 
     static TreeMap<Integer, File> patchFileTreeMap(Integer begin, Integer end) {
-        def patchesDir = Paths.get("patch").toFile()
+        def patchesDir = FileUtils.projectSpecificFile("patch").toFile()
         TreeMap<Integer, File> matchedPatch = [:]
 
         //Собираем файлы, которые попали под регулярку и диапазон версий
         patchesDir.eachFile {
             File it ->
                 Integer ver = extractVersionFromPatchFile(it)
-                if (ver && begin < ver && end <= ver) {
+                if (ver && begin < ver && end >= ver) {
                     matchedPatch.put(ver, it);
                 } else {
-                    println "Patch file ${it} skipped"
+                   // println "Patch file ${it} skipped, due condition $ver not IN ($begin;$end]"
                 }
         }
         return matchedPatch;
@@ -179,29 +180,27 @@ class DBUtils {
         }
     }
 
-    static Collection<File> sourceFiles() {
+    static LinkedHashSet listFilesInProjectDirOrderAware(Path orderFileDirPath, Path... dirs) {
         LinkedHashSet result = []
-        def srcPath = Paths.get("src");
         //Сначала парсим файлик с порядком, и добавляем их в начало, все остальное - как получится
-        def orderFile = srcPath.resolve("order.txt").toFile();
+        def orderFile = orderFileDirPath.resolve("order.txt").toFile();
         if (orderFile.exists()) {
             String[] hasOrder = orderFile;
             for (String h : hasOrder) {
-                def file = srcPath.resolve(h).toFile();
+                def file = orderFileDirPath.resolve(h).toFile();
                 if (file.exists())
                     result.add(file)
                 else
                     println "Bad order file, $h is not found"
             }
-        } else
-            println "File ${orderFile.getAbsolutePath()} not exists"
+        }
 
         //Сканириуем директорию на предмет sql файлов, и добавляем их в результат
         //Но лишь при условии, что они там отсутствуют (чтобы не портить порядок)
-        def appendInDirectory = { String dir ->
-            def storedProcedures = srcPath.resolve(dir).toFile();
-            if (storedProcedures.exists()) {
-                storedProcedures.eachFile(FileType.FILES) {
+        def appendInDirectory = { Path dir ->
+            def directoryFile = dir.toFile();
+            if (directoryFile.exists()) {
+                directoryFile.eachFile(FileType.FILES) {
                     if (it.getName().endsWith(".sql")) {
                         if (!result.contains(it)) {
                             result.add(it)
@@ -212,19 +211,34 @@ class DBUtils {
             } else
                 println "${dir} is not found, skip it"
         }
-        //Хранимые процедуры
-        appendInDirectory("sp")
-        //Представления
-        appendInDirectory("view")
+
+        dirs.each { appendInDirectory }
 
         return result;
     }
 
+    static Collection<File> sourceFiles() {
+        def srcPath = FileUtils.projectSpecificFile("src")
+        def storedProcedurePath = srcPath.resolve("sp");
+        def viewPath = srcPath.resolve("view");
+
+        return listFilesInProjectDirOrderAware(srcPath, storedProcedurePath, viewPath)
+    }
+
     static Collection<File> schemaFiles() {
-        def files = [
-                Paths.get("schema", "schema.sql").toFile(),
-                Paths.get("schema", "data.sql").toFile()
-        ]
-        return files;
+        Path schemaDir = FileUtils.projectSpecificFile("schema");
+        def schemaSqlFile = schemaDir.resolve("schema.sql").toFile();
+        //Файлы, которые были указаны в order.txt файле
+        def orderFiles = listFilesInProjectDirOrderAware(schemaDir, schemaDir)
+
+        //schema.sql в любом случае первой должна быть, нужно ее первой сделать, сорт оф костыль
+        orderFiles.remove(schemaSqlFile);
+
+        def summary = []
+        summary.add(schemaSqlFile)
+        summary.addAll(orderFiles)
+
+        return summary;
+
     }
 }

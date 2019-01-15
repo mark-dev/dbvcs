@@ -1,4 +1,3 @@
-package core
 
 import groovy.transform.SourceURI
 
@@ -12,7 +11,7 @@ class FileUtils {
     static {
         @SourceURI
         URI src;
-        INSTALLATION_ROOT = Paths.get(src).getParent().getParent().resolve(INTERNAL_FILE_ROOT_DIR)
+        INSTALLATION_ROOT = Paths.get(src).getParent().resolve(INTERNAL_FILE_ROOT_DIR)
     }
 
     static File getInternalFile(String name) {
@@ -23,4 +22,8 @@ class FileUtils {
     }
 
 
+    static Path projectSpecificFile(String name) {
+        String dir = System.getProperty("projectDir", ".")
+        return Paths.get(dir, name);
+    }
 }

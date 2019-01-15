@@ -1,5 +1,3 @@
-package core
-
 class IOUtils {
     static boolean askYesNo(String msg) {
         String input;
