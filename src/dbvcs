@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 CURRENT_DIR=`pwd`
+#TODO: Выбор конфигурационного файла из всех *.properties и передача как -DdbVCSConfigFile=other.properties
 if [ ! -f "dbvcs.properties" ];
 then
     echo "You must call this script from your database-project directory"

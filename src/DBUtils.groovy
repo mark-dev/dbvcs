@@ -10,15 +10,18 @@ import static ConfigUtils.CONFIG
 class DBUtils {
 
     public static final String DBVCS_TABLENAME = "dbvcs";
-    public static final String DEFAULT_SCHEMA = "public"; //TODO: Это бы в конфигурацию
+    //Схема, в которой таблица с DBVCS
+    public static final String DBVCS_SCHEMA = "public"; //TODO: Это бы в конфигурацию
+    //Схема, в которой мы будем дропать исходники хранимых процедур
+    public static final String SRC_DROP_SCHEMA = "public"; //TODO: Это бы в конфигурацию
 
-    static Sql ROOT_CONNECTION = makeConnection("postgres");
+    static Sql ROOT_CONNECTION = makeConnection(CONFIG.rootDB as String);
     static Sql TARGET_DB_CONNECTION = null;
 
     static Sql makeConnection(String db) {
         Class.forName("org.postgresql.Driver");
-        def user = "postgres"
-        def password = "postgres"
+        def user = CONFIG.rootUser
+        def password = CONFIG.rootPassword
         //TODO: в конфиг, как подключиться к БД(логин пароль итп)
         def dbUrl = "jdbc:postgresql://${CONFIG.host}/${db}?user=$user&password=$password"
         return Sql.newInstance(dbUrl, [
@@ -39,7 +42,7 @@ class DBUtils {
 
     static boolean isDBVCSTableExists() {
         String query = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = ?1 AND table_name = ?2)"
-        def row = TARGET_DB_CONNECTION.firstRow(query, [DEFAULT_SCHEMA, DBVCS_TABLENAME]);
+        def row = TARGET_DB_CONNECTION.firstRow(query, [DBVCS_SCHEMA, DBVCS_TABLENAME]);
         return row.exists;
     }
 
@@ -48,17 +51,14 @@ class DBUtils {
         return rows.asBoolean();
     }
 
-    static String createTargetDB() {
-        def res = evalInternalFile(ROOT_CONNECTION, "create-db.sql", [
+    static void createTargetDB() {
+        evalInternalFile(ROOT_CONNECTION, "create-db.sql", [
                 "db"    : CONFIG.targetDB,
                 "dbuser": CONFIG.targetDBUser
         ])
-        //TODO: Как-то убедиться бы, что здесь все корректно, использовать переменную res для этого - плохая идея,
-        // см описание statement.execute
-        return CONFIG.targetDB;
     }
 
-    static Sql connectToTargetDB() {
+    static Sql establishTargetDBConnection() {
         TARGET_DB_CONNECTION = makeConnection(CONFIG.targetDB as String)
         return TARGET_DB_CONNECTION;
     }
@@ -128,7 +128,7 @@ class DBUtils {
 
 
             //Дропаем все исходники(хранимки,вью,мвью)
-            evalInternalFile("drop-src.sql", ["schema": DEFAULT_SCHEMA])
+            evalInternalFile("drop-src.sql", ["schema": SRC_DROP_SCHEMA])
             //Накатываем исходники
             evalFiles(sourceFiles());
 
@@ -136,10 +136,14 @@ class DBUtils {
             //Проставляем правильные права для всех объектов
             evalInternalFile("ownership.sql", ["dbuser": CONFIG.targetDBUser])
             //Пишем версию накатанной схемы
-            TARGET_DB_CONNECTION.execute("INSERT INTO $DBVCS_TABLENAME(version,script_name) VALUES (?1,?2)", [versionAfterUpdate, scriptFileName])
+            setDatabaseVersion(versionAfterUpdate, scriptFileName)
         }
 
         return true;
+    }
+
+    static setDatabaseVersion(Integer version, String scriptFileName) {
+        TARGET_DB_CONNECTION.execute("INSERT INTO $DBVCS_TABLENAME(version,script_name) VALUES (?1,?2)", [version, scriptFileName])
     }
 
     static Pattern PATCH_FILE_REGEXP = ~/^(\d+)_.*\.sql/
@@ -157,16 +161,17 @@ class DBUtils {
     static TreeMap<Integer, File> patchFileTreeMap(Integer begin, Integer end) {
         def patchesDir = FileUtils.projectSpecificFile("patch").toFile()
         TreeMap<Integer, File> matchedPatch = [:]
-
-        //Собираем файлы, которые попали под регулярку и диапазон версий
-        patchesDir.eachFile {
-            File it ->
-                Integer ver = extractVersionFromPatchFile(it)
-                if (ver && begin < ver && end >= ver) {
-                    matchedPatch.put(ver, it);
-                } else {
-                   // println "Patch file ${it} skipped, due condition $ver not IN ($begin;$end]"
-                }
+        if (patchesDir.exists()) {
+            //Собираем файлы, которые попали под регулярку и диапазон версий
+            patchesDir.eachFile {
+                File it ->
+                    Integer ver = extractVersionFromPatchFile(it)
+                    if (ver && begin < ver && end >= ver) {
+                        matchedPatch.put(ver, it);
+                    } else {
+                        // println "Patch file ${it} skipped, due condition $ver not IN ($begin;$end]"
+                    }
+            }
         }
         return matchedPatch;
     }
@@ -206,13 +211,15 @@ class DBUtils {
                             result.add(it)
                         }
                     } else
-                        println "File ${it} skipped"
+                        println "File ${it} ignored during folder scan $dir"
                 }
             } else
                 println "${dir} is not found, skip it"
         }
 
-        dirs.each { appendInDirectory }
+        dirs.each {
+            appendInDirectory(it)
+        }
 
         return result;
     }
