@@ -19,7 +19,7 @@ class IOUtils {
         return Integer.parseInt(input)
     }
 
-    static void ensureYes(String msg, int exitCodeIfNo) {
+    static void ensureYesOrShutdown(String msg, int exitCodeIfNo) {
         if (!askYesNo(msg))
             System.exit(exitCodeIfNo)
     }

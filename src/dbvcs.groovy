@@ -1,7 +1,4 @@
 @GrabConfig(systemClassLoader = true)
-//Почемуто без этого, все фейлиться, с сообщением что не найден класс для JDBC соединения.
-//Хотя в гайдах везде говорят что systemClassLoader=true достаточно
-@GrabResolver(name = 'prka-snapshot', root = "http://nexus.prk-a.ax:8081/repository/maven-central/")
 @Grab(group = 'org.postgresql', module = 'postgresql', version = '9.4.1209')
 
 import static ConfigUtils.CONFIG
@@ -13,7 +10,7 @@ static void printConfigurationAndAckContinue() {
             println "$k -> $v"
     }
     println "=" * 80
-    IOUtils.ensureYes("Continue?", 0)
+    IOUtils.ensureYesOrShutdown("Continue?", 0)
 }
 
 static void main(String[] args) {
@@ -22,7 +19,7 @@ static void main(String[] args) {
 
     //Создаем БД, если ее нет
     if (!DBUtils.isTargetDBExists()) {
-        IOUtils.ensureYes("Target DB is not exists. Create it automatically?", 0)
+        IOUtils.ensureYesOrShutdown("Target DB is not exists. Create it automatically?", 0)
         DBUtils.createTargetDB()
     }
     println "Database $CONFIG.targetDB EXISTS, check for version.."
@@ -33,7 +30,7 @@ static void main(String[] args) {
 
     def vcsDBTableExists = DBUtils.isDBVCSTableExists()
     if (!vcsDBTableExists) {
-        IOUtils.ensureYes("Database version table is missing, create it automatically?", 0)
+        IOUtils.ensureYesOrShutdown("Database version table is missing, create it automatically?", 0)
         DBUtils.createVCSDBTable()
         boolean hasSchema = IOUtils.askYesNo("Database version table created. You already have schema?")
         if (hasSchema) {
@@ -77,12 +74,12 @@ static void main(String[] args) {
             msg = "No new patches found. We can just update stored procedures,views,mviews. Continue?"
         }
 
-        IOUtils.ensureYes(msg, 0)
+        IOUtils.ensureYesOrShutdown(msg, 0)
         DBUtils.upgrade(false, current, lastPatchVersion)
 
     } else {
         //TODO: Схемы нет, спросить пользователя, накатываем ли схему?
-        IOUtils.ensureYes("No schema are present, should we deploy schema + all patches?", 0)
+        IOUtils.ensureYesOrShutdown("No schema are present, should we deploy schema + all patches?", 0)
         DBUtils.freshInstall()
     }
     println "OK"
